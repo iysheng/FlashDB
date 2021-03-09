@@ -60,7 +60,7 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *part_name, fdb
             return FDB_PART_NOT_FOUND;
         }
 
-        block_size = fal_flash_device_find(db->storage.part->flash_name)->blk_size;
+        block_size = fal_flash_device_find(&db->storage.part->flash_name[0])->blk_size;
         if (db->sec_size == 0) {
             db->sec_size = block_size;
         } else {
