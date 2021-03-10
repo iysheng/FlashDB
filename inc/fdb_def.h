@@ -183,7 +183,7 @@ typedef enum {
 
 /* the flash sector store status */
 enum fdb_sector_store_status {
-    FDB_SECTOR_STORE_UNUSED,
+    FDB_SECTOR_STORE_UNUSED, /* 任意类型，在迭代的时候会根据这个参数匹配对应类型的 sector */
     FDB_SECTOR_STORE_EMPTY,
     FDB_SECTOR_STORE_USING,
     FDB_SECTOR_STORE_FULL,
@@ -202,6 +202,10 @@ enum fdb_sector_dirty_status {
 typedef enum fdb_sector_dirty_status fdb_sector_dirty_status_t;
 
 /* KVDB section information */
+/* 这个结构体比较重要，是 flashdb 中保存 kv 的集合，即
+ * flashdb 将管理的 flash 区域分为多个 sector
+ * 每一个 sector 可以保存多个 kv
+ * */
 struct kvdb_sec_info {
     bool check_ok;                               /**< sector header check is OK */
     struct {

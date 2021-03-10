@@ -455,10 +455,13 @@ static uint32_t get_next_sector_addr(fdb_kvdb_t db, kv_sec_info_t pre_sec)
         /* the next sector is on the top of the partition */
         return 0;
     } else {
+        /* 遍历得到了下一个 sector 的地址 */
         /* check KV sector combined */
         if (pre_sec->combined == SECTOR_NOT_COMBINED) {
             next_addr = pre_sec->addr + db_sec_size(db);
         } else {
+            /* 如果是合并型的(该 sector 和多个 sector 是和并在一起存储 KV 的)，
+             * 需要重新计算地址偏移大小 */
             next_addr = pre_sec->addr + pre_sec->combined * db_sec_size(db);
         }
         /* check range */
@@ -813,6 +816,7 @@ static bool alloc_kv_cb(kv_sec_info_t sector, void *arg1, void *arg2)
     if (sector->check_ok && sector->remain > arg->kv_size
             && ((sector->status.dirty == FDB_SECTOR_DIRTY_FALSE)
                     || (sector->status.dirty == FDB_SECTOR_DIRTY_TRUE && !arg->db->gc_request))) {
+        /* 提取当前 sector 下一个空的 kv 地址 */
         *(arg->empty_kv) = sector->empty_kv;
         return true;
     }
@@ -827,12 +831,18 @@ static uint32_t alloc_kv(fdb_kvdb_t db, kv_sec_info_t sector, size_t kv_size)
     struct alloc_kv_cb_args arg = {db, kv_size, &empty_kv};
 
     /* sector status statistics */
+    /* 首先统计所有空的以及在使用的 sector 的数量 */
     sector_iterator(db, sector, FDB_SECTOR_STORE_UNUSED, &empty_sector, &using_sector, sector_statistics_cb, false);
+    /* 如果有在使用的 sector，那么从该 sector 分配 flash 存储空间 */
     if (using_sector > 0) {
         /* alloc the KV from the using status sector first */
         sector_iterator(db, sector, FDB_SECTOR_STORE_USING, &arg, NULL, alloc_kv_cb, true);
     }
+    /* 如果存在为空的 sector 并且没有成功从非空的 sector 申请出 flash 空间 */
     if (empty_sector > 0 && empty_kv == FAILED_ADDR) {
+        /* 如果空的 sector 数量足够多
+         * 或者已经有了垃圾回收的请求
+         * */
         if (empty_sector > FDB_GC_EMPTY_SEC_THRESHOLD || db->gc_request) {
             sector_iterator(db, sector, FDB_SECTOR_STORE_EMPTY, &arg, NULL, alloc_kv_cb, true);
         } else {
@@ -842,6 +852,7 @@ static uint32_t alloc_kv(fdb_kvdb_t db, kv_sec_info_t sector, size_t kv_size)
         }
     }
 
+    /* 返回申请到的 flash 地址 */
     return empty_kv;
 }
 
@@ -1039,7 +1050,7 @@ static void gc_collect(fdb_kvdb_t db)
     sector_iterator(db, &sector, FDB_SECTOR_STORE_EMPTY, &empty_sec, NULL, gc_check_cb, false);
 
     /* do GC collect */
-    FDB_DEBUG("The remain empty sector is %zu, GC threshold is %d.\n", empty_sec, FDB_GC_EMPTY_SEC_THRESHOLD);
+    FDB_DEBUG("The remain empty sector is %u, GC threshold is %d.\n", empty_sec, FDB_GC_EMPTY_SEC_THRESHOLD);
     if (empty_sec <= FDB_GC_EMPTY_SEC_THRESHOLD) {
         sector_iterator(db, &sector, FDB_SECTOR_STORE_UNUSED, db, NULL, do_gc, false);
     }
@@ -1143,6 +1154,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
         }
         /* trigger GC collect when current sector is full */
         if (result == FDB_NO_ERR && is_full) {
+            /* 触发垃圾回收 */
             FDB_DEBUG("Trigger a GC check after created KV.\n");
             db->gc_request = true;
         }
@@ -1181,11 +1193,13 @@ fdb_err_t fdb_kv_del(fdb_kvdb_t db, const char *key)
     return result;
 }
 
+/* 设置一个 kv 对 */
 static fdb_err_t set_kv(fdb_kvdb_t db, const char *key, const void *value_buf, size_t buf_len)
 {
     fdb_err_t result = FDB_NO_ERR;
     bool kv_is_found = false;
 
+    /* 如果 value_buf 为空，表示删除这个 kv */
     if (value_buf == NULL) {
         result = del_kv(db, key, NULL, true);
     } else {
@@ -1487,6 +1501,7 @@ fdb_err_t _fdb_kv_load(fdb_kvdb_t db)
 
     db->in_recovery_check = true;
     /* check all sector header */
+    /* 迭代检查所有未使用过的 sector，格式化对应的头部，标记为 flashdb 的 sector */
     sector_iterator(db, &sector, FDB_SECTOR_STORE_UNUSED, &check_failed_count, db, check_sec_hdr_cb, false);
     /* all sector header check failed */
     if (check_failed_count == SECTOR_NUM) {
@@ -1584,6 +1599,7 @@ fdb_err_t fdb_kvdb_init(fdb_kvdb_t db, const char *name, const char *part_name, 
     /* must be aligned with write granularity */
     FDB_ASSERT((FDB_STR_KV_VALUE_MAX_SIZE * 8) % FDB_WRITE_GRAN == 0);
 
+    /* 根据 fal 的分区查找对应的设备 */
     result = _fdb_init_ex((fdb_db_t)db, name, part_name, FDB_DB_TYPE_KV, user_data);
     if (result != FDB_NO_ERR) {
         goto __exit;

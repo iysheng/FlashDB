@@ -62,6 +62,9 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *part_name, fdb
 
         block_size = fal_flash_device_find(&db->storage.part->flash_name[0])->blk_size;
         if (db->sec_size == 0) {
+            /* 初始化 db 的 sectorsize
+             * 是所属 flash 的擦除块大小
+             * */
             db->sec_size = block_size;
         } else {
             /* must be aligned with block size */
