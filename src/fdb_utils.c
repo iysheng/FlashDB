@@ -100,6 +100,7 @@ size_t _fdb_set_status(uint8_t status_table[], size_t status_num, size_t status_
      */
     memset(status_table, 0xFF, FDB_STATUS_TABLE_SIZE(status_num));
     if (status_index > 0) {
+        /* 如果数据写的颗粒度是 1 bit */
 #if (FDB_WRITE_GRAN == 1)
         byte_index = (status_index - 1) / 8;
         status_table[byte_index] &= ~(0x80 >> ((status_index - 1) % 8));
@@ -142,6 +143,7 @@ fdb_err_t _fdb_write_status(fdb_db_t db, uint32_t addr, uint8_t status_table[], 
     FDB_ASSERT(status_table);
 
     /* set the status first */
+    /* 更新状态表 */
     byte_index = _fdb_set_status(status_table, status_num, status_index);
 
     /* the first status table value is all 1, so no need to write flash */
@@ -153,6 +155,7 @@ fdb_err_t _fdb_write_status(fdb_db_t db, uint32_t addr, uint8_t status_table[], 
 #else /*  (FDB_WRITE_GRAN == 8) ||  (FDB_WRITE_GRAN == 32) ||  (FDB_WRITE_GRAN == 64) */
     /* write the status by write granularity
      * some flash (like stm32 onchip) NOT supported repeated write before erase */
+    /* 将状态表更新到 flash */
     result = _fdb_flash_write(db, addr + byte_index, (uint32_t *) &status_table[byte_index], FDB_WRITE_GRAN / 8);
 #endif /* FDB_WRITE_GRAN == 1 */
 

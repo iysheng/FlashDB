@@ -60,6 +60,9 @@
 /* the next address is get failed */
 #define FAILED_ADDR                              0xFFFFFFFF
 
+/* 计算存储某一个 KV 对，需要的状态表所占的字节数
+ * 每一个 KV 对应的状态表，紧跟这个 Key 首地址保存
+ * */
 #define KV_STATUS_TABLE_SIZE                     FDB_STATUS_TABLE_SIZE(FDB_KV_STATUS_NUM)
 
 #define SECTOR_NUM                               (db_max_size(db) / db_sec_size(db))
@@ -99,9 +102,12 @@ struct sector_hdr_data {
 };
 typedef struct sector_hdr_data *sector_hdr_data_t;
 
+/* kv 对象的头部 */
 struct kv_hdr_data {
+    /* 记录这条 KV 的状态 */
     uint8_t status_table[KV_STATUS_TABLE_SIZE];  /**< KV node status, @see fdb_kv_status_t */
     uint32_t magic;                              /**< magic word(`K`, `V`, `4`, `0`) */
+    /* 记录这个 KV 节点总长度，包括头部、名称和数值 */
     uint32_t len;                                /**< KV node total length (header + name + value), must align by FDB_WRITE_GRAN */
     uint32_t crc32;                              /**< KV node crc32(name_len + data_len + name + value) */
     uint8_t name_len;                            /**< name length */
@@ -856,6 +862,7 @@ static uint32_t alloc_kv(fdb_kvdb_t db, kv_sec_info_t sector, size_t kv_size)
     return empty_kv;
 }
 
+/* 删除一个 KV 对 */
 static fdb_err_t del_kv(fdb_kvdb_t db, const char *key, fdb_kv_t old_kv, bool complete_del)
 {
     fdb_err_t result = FDB_NO_ERR;
@@ -864,21 +871,29 @@ static fdb_err_t del_kv(fdb_kvdb_t db, const char *key, fdb_kv_t old_kv, bool co
     uint8_t status_table[KV_STATUS_TABLE_SIZE >= FDB_DIRTY_STATUS_TABLE_SIZE ? KV_STATUS_TABLE_SIZE : FDB_DIRTY_STATUS_TABLE_SIZE];
 
     /* need find KV */
+    /* 如果传递的 old_kv 为空，表示需要查找这个 KV 对 */
     if (!old_kv) {
         struct fdb_kv kv;
         /* find KV */
         if (find_kv(db, key, &kv)) {
+            /* 如果找到了这个 KV 对，将地址保存到 old_kv 这个指针变量 */
             old_kv = &kv;
         } else {
             FDB_DEBUG("Not found '%s' in KV.\n", key);
             return FDB_KV_NAME_ERR;
         }
     }
+
     /* change and save the new status */
+    /* 如果为假，表示做删除前的准备！！！ */
     if (!complete_del) {
+        /* 标记这个 node 为预删除状态，更新对应的状态表 */
         result = _fdb_write_status((fdb_db_t)db, old_kv->addr.start, status_table, FDB_KV_STATUS_NUM, FDB_KV_PRE_DELETE);
         db->last_is_complete_del = true;
     } else {
+        /* 如果为真，表示是删除这个 KV 对的第二步
+         * 到这里就需要删除这个 KV 对了
+         * */
         result = _fdb_write_status((fdb_db_t)db, old_kv->addr.start, status_table, FDB_KV_STATUS_NUM, FDB_KV_DELETED);
 
         if (!db->last_is_complete_del && result == FDB_NO_ERR) {
@@ -899,8 +914,10 @@ static fdb_err_t del_kv(fdb_kvdb_t db, const char *key, fdb_kv_t old_kv, bool co
 
     dirty_status_addr = FDB_ALIGN_DOWN(old_kv->addr.start, db_sec_size(db)) + SECTOR_DIRTY_OFFSET;
     /* read and change the sector dirty status */
+    /* 如果这个 KV 不是一个脏状态，表示可以写入新值 */
     if (result == FDB_NO_ERR
             && _fdb_read_status((fdb_db_t)db, dirty_status_addr, status_table, FDB_SECTOR_DIRTY_STATUS_NUM) == FDB_SECTOR_DIRTY_FALSE) {
+        /* 标记这个 KV 状态为脏 */
         result = _fdb_write_status((fdb_db_t)db, dirty_status_addr, status_table, FDB_SECTOR_DIRTY_STATUS_NUM, FDB_SECTOR_DIRTY_TRUE);
     }
 
@@ -1111,6 +1128,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
         size_t align_remain;
         /* update the sector status */
         if (result == FDB_NO_ERR) {
+            /* 更新整个 sector 的状态 */
             result = update_sec_status(db, sector, kv_hdr.len, &is_full);
         }
         if (result == FDB_NO_ERR) {
@@ -1128,10 +1146,12 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
                 kv_hdr.crc32 = fdb_calc_crc32(kv_hdr.crc32, &ff, 1);
             }
             /* write KV header data */
+            /* 写入头部信息 */
             result = write_kv_hdr(db, kv_addr, &kv_hdr);
 
         }
         /* write key name */
+        /* 写入 Key 值 */
         if (result == FDB_NO_ERR) {
             result = align_write(db, kv_addr + KV_HDR_DATA_SIZE, (uint32_t *) key, kv_hdr.name_len);
 
@@ -1144,6 +1164,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
 #endif /* FDB_KV_USING_CACHE */
         }
         /* write value */
+        /* 写入 Value 值 */
         if (result == FDB_NO_ERR) {
             result = align_write(db, kv_addr + KV_HDR_DATA_SIZE + FDB_WG_ALIGN(kv_hdr.name_len), value,
                     kv_hdr.value_len);

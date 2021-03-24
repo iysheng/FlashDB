@@ -116,12 +116,15 @@ typedef enum {
     FDB_INIT_FAILED,
 } fdb_err_t;
 
+/* 每一个 Key 在 Flash 存储的地址处都跟了一个 status 的表来
+ * 保存这个 KV 的状态？？？
+ * */
 enum fdb_kv_status {
     FDB_KV_UNUSED,
     FDB_KV_PRE_WRITE,
     FDB_KV_WRITE,
-    FDB_KV_PRE_DELETE,
-    FDB_KV_DELETED,
+    FDB_KV_PRE_DELETE, /* 预删除状态 */
+    FDB_KV_DELETED, /* 删除状态 */
     FDB_KV_ERR_HDR,
     FDB_KV_STATUS_NUM,
 };
@@ -169,6 +172,7 @@ struct fdb_tsl {
     fdb_time_t time;                             /**< node timestamp */
     uint32_t log_len;                            /**< log length, must align by FDB_WRITE_GRAN */
     struct {
+        /* node index 首地址保存的是什么？？？ */
         uint32_t index;                          /**< node index address */
         uint32_t log;                            /**< log data address */
     } addr;
@@ -288,7 +292,7 @@ struct fdb_kvdb {
     bool in_recovery_check;                      /**< is in recovery check status when first reboot */
     struct fdb_kv cur_kv;
     struct kvdb_sec_info cur_sector;
-    bool last_is_complete_del;
+    bool last_is_complete_del; /* 这个成员表示的什么意思？？？ */
 
 #ifdef FDB_KV_USING_CACHE
     /* KV cache table */
