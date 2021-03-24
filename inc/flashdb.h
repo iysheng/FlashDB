@@ -63,6 +63,7 @@ size_t     fdb_tsl_query_count (fdb_tsdb_t db, fdb_time_t from, fdb_time_t to, f
 fdb_err_t  fdb_tsl_set_status  (fdb_tsdb_t db, fdb_tsl_t tsl, fdb_tsl_status_t status);
 void       fdb_tsl_clean       (fdb_tsdb_t db);
 fdb_blob_t fdb_tsl_to_blob     (fdb_tsl_t tsl, fdb_blob_t blob);
+size_t fdb_tsl_get_usingsize(fdb_tsdb_t db);
 
 /* fdb_utils.c */
 uint32_t   fdb_calc_crc32(uint32_t crc, const void *buf, size_t size);

@@ -577,6 +577,29 @@ fdb_err_t fdb_tsl_set_status(fdb_tsdb_t db, fdb_tsl_t tsl, fdb_tsl_status_t stat
     return result;
 }
 
+static bool get_used_size_cb(fdb_tsl_t tsl, void *arg)
+{
+    size_t *using_size = arg;
+
+    /* recheck log len */
+    *using_size += tsl->log_len;
+
+    return false;
+}
+
+size_t fdb_tsl_get_usingsize(fdb_tsdb_t db)
+{
+    size_t using_size = 0;
+
+    /* lock the KV cache */
+    db_lock(db);
+    fdb_tsl_iter(db, &get_used_size_cb, &using_size);
+    /* unlock the KV cache */
+    db_unlock(db);
+
+    return using_size;
+}
+
 /**
  * Convert the TSL object to blob object
  *
