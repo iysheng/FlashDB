@@ -209,6 +209,7 @@ typedef enum fdb_sector_dirty_status fdb_sector_dirty_status_t;
 /* 这个结构体比较重要，是 flashdb 中保存 kv 的集合，即
  * flashdb 将管理的 flash 区域分为多个 sector
  * 每一个 sector 可以保存多个 kv
+ * 这个是结构体是 sector_hdr_data(flash 保存的原始数据) 数据在内存中的抽象表示
  * */
 struct kvdb_sec_info {
     bool check_ok;                               /**< sector header check is OK */

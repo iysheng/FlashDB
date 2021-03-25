@@ -143,7 +143,7 @@ fdb_err_t _fdb_write_status(fdb_db_t db, uint32_t addr, uint8_t status_table[], 
     FDB_ASSERT(status_table);
 
     /* set the status first */
-    /* 更新状态表 */
+    /* 更新状态表，改的是内存中的数据 */
     byte_index = _fdb_set_status(status_table, status_num, status_index);
 
     /* the first status table value is all 1, so no need to write flash */

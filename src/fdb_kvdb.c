@@ -91,6 +91,7 @@
 
 #define VER_NUM_KV_NAME                         "__ver_num__"
 
+/* flash 中存储的原始数据 */
 struct sector_hdr_data {
     struct {
         uint8_t store[FDB_STORE_STATUS_TABLE_SIZE];  /**< sector store status @see fdb_sector_store_status_t */
@@ -102,7 +103,7 @@ struct sector_hdr_data {
 };
 typedef struct sector_hdr_data *sector_hdr_data_t;
 
-/* kv 对象的头部 */
+/* kv 对象的头部原始数据 */
 struct kv_hdr_data {
     /* 记录这条 KV 的状态 */
     uint8_t status_table[KV_STATUS_TABLE_SIZE];  /**< KV node status, @see fdb_kv_status_t */
@@ -179,14 +180,19 @@ static void update_kv_cache(fdb_kvdb_t db, const char *name, size_t name_len, ui
     uint16_t name_crc = (uint16_t) (fdb_calc_crc32(0, name, name_len) >> 16), min_activity = 0xFFFF;
 
     for (i = 0; i < FDB_KV_CACHE_TABLE_SIZE; i++) {
+        /* 如果是一个有效的地址 */
         if (addr != FDB_DATA_UNUSED) {
             /* update the KV address in cache */
             if (db->kv_cache_table[i].name_crc == name_crc) {
                 db->kv_cache_table[i].addr = addr;
                 return;
+                /* 如果已经遍历到 cache 的最后 */
             } else if ((db->kv_cache_table[i].addr == FDB_DATA_UNUSED) && (empty_index == FDB_KV_CACHE_TABLE_SIZE)) {
                 empty_index = i;
             } else if (db->kv_cache_table[i].addr != FDB_DATA_UNUSED) {
+				/* 这部分不知道在做什么吗，是更新 cache 的访问次数吗，会
+			     * 会根据这个次数来刷 cache 吗？
+		   	     */
                 if (db->kv_cache_table[i].active > 0) {
                     db->kv_cache_table[i].active--;
                 }
@@ -197,12 +203,16 @@ static void update_kv_cache(fdb_kvdb_t db, const char *name, size_t name_len, ui
             }
         } else if (db->kv_cache_table[i].name_crc == name_crc) {
             /* delete the KV */
+            /* 从 cache 中删除这个 KV
+             * 地址设置为未使用，设置激活状态为 0
+             */
             db->kv_cache_table[i].addr = FDB_DATA_UNUSED;
             db->kv_cache_table[i].active = 0;
             return;
         }
     }
     /* add the KV to cache, using LRU (Least Recently Used) like algorithm */
+    /* 将这个 KV 添加到 cache */
     if (empty_index < FDB_KV_CACHE_TABLE_SIZE) {
         db->kv_cache_table[empty_index].addr = addr;
         db->kv_cache_table[empty_index].name_crc = name_crc;
@@ -322,6 +332,7 @@ static fdb_err_t read_kv(fdb_kvdb_t db, fdb_kv_t kv)
     size_t len, size;
     /* read KV header raw data */
     _fdb_flash_read((fdb_db_t)db, kv->addr.start, (uint32_t *)&kv_hdr, sizeof(struct kv_hdr_data));
+    /* 根据 flash 中保存的这个 KV 的状态信息，在这里获取 status */
     kv->status = (fdb_kv_status_t) _fdb_get_status(kv_hdr.status_table, FDB_KV_STATUS_NUM);
     kv->len = kv_hdr.len;
 
@@ -329,6 +340,7 @@ static fdb_err_t read_kv(fdb_kvdb_t db, fdb_kv_t kv)
         /* the KV length was not write, so reserved the info for current KV */
         kv->len = KV_HDR_DATA_SIZE;
         if (kv->status != FDB_KV_ERR_HDR) {
+            /* 标记这个 KV 的头部信息错误 */
             kv->status = FDB_KV_ERR_HDR;
             FDB_DEBUG("Error: The KV @0x%08" PRIX32 " length has an error.\n", kv->addr.start);
             _fdb_write_status((fdb_db_t)db, kv->addr.start, kv_hdr.status_table, FDB_KV_STATUS_NUM, FDB_KV_ERR_HDR);
@@ -375,6 +387,9 @@ static fdb_err_t read_kv(fdb_kvdb_t db, fdb_kv_t kv)
     return result;
 }
 
+/* 从 flash 读取 struct kvdb_sec_info 的信息
+ * 该信息保存在每一个 sector 的首地址
+ */
 static fdb_err_t read_sector_info(fdb_kvdb_t db, uint32_t addr, kv_sec_info_t sector, bool traversal)
 {
     fdb_err_t result = FDB_NO_ERR;
@@ -384,11 +399,14 @@ static fdb_err_t read_sector_info(fdb_kvdb_t db, uint32_t addr, kv_sec_info_t se
     FDB_ASSERT(sector);
 
     /* read sector header raw data */
+    /* 获取 flash 中保存的 sector 头部信息的原始数据 */
     _fdb_flash_read((fdb_db_t)db, addr, (uint32_t *)&sec_hdr, sizeof(struct sector_hdr_data));
 
+    /* 将原始数据抽象保存到 struct kvdb_sec_info 结构体 */
     sector->addr = addr;
     sector->magic = sec_hdr.magic;
     /* check magic word */
+    /* 如果没有 magic 信息，表示这个 sector 是和上一个 sector 合并在一起的 */
     if (sector->magic != SECTOR_MAGIC_WORD) {
         sector->check_ok = false;
         sector->combined = SECTOR_NOT_COMBINED;
@@ -397,15 +415,22 @@ static fdb_err_t read_sector_info(fdb_kvdb_t db, uint32_t addr, kv_sec_info_t se
     sector->check_ok = true;
     /* get other sector info */
     sector->combined = sec_hdr.combined;
+    /* 返回这个 sector 的存储状态 */
     sector->status.store = (fdb_sector_store_status_t) _fdb_get_status(sec_hdr.status_table.store, FDB_SECTOR_STORE_STATUS_NUM);
+    /* 返回这个 sector 是否是脏块的信息 */
     sector->status.dirty = (fdb_sector_dirty_status_t) _fdb_get_status(sec_hdr.status_table.dirty, FDB_SECTOR_DIRTY_STATUS_NUM);
     /* traversal all KV and calculate the remain space size */
+    /* 根据传递的参数，遍历所有的 KV 并计算剩下的空间 */
     if (traversal) {
+        /* 初始化剩下的空间是 0 */
         sector->remain = 0;
         sector->empty_kv = sector->addr + SECTOR_HDR_DATA_SIZE;
+        /* 如果这个 sector 是空状态 */
         if (sector->status.store == FDB_SECTOR_STORE_EMPTY) {
+            /* 那么剩下的空间就是除去头部之外这个 sector 的所有 flash 区域 */
             sector->remain = db_sec_size(db) - SECTOR_HDR_DATA_SIZE;
         } else if (sector->status.store == FDB_SECTOR_STORE_USING) {
+            /* 如果这个 sector 中保存了一部分的 KV */
             struct fdb_kv kv_obj;
 
 #ifdef FDB_KV_USING_CACHE
@@ -416,6 +441,7 @@ static fdb_err_t read_sector_info(fdb_kvdb_t db, uint32_t addr, kv_sec_info_t se
 #endif /* FDB_KV_USING_CACHE */
 
             sector->remain = db_sec_size(db) - SECTOR_HDR_DATA_SIZE;
+            /* 第一个 kv 对象的首地址 */
             kv_obj.addr.start = sector->addr + SECTOR_HDR_DATA_SIZE;
             do {
 
@@ -444,6 +470,7 @@ static fdb_err_t read_sector_info(fdb_kvdb_t db, uint32_t addr, kv_sec_info_t se
                 }
             }
 
+            /* 将 sector 信息更新到 cache */
 #ifdef FDB_KV_USING_CACHE
             update_sector_cache(db, sector->addr, sector->empty_kv);
 #endif
@@ -489,6 +516,7 @@ static void kv_iterator(fdb_kvdb_t db, fdb_kv_t kv, void *arg1, void *arg2,
     sec_addr = 0;
     /* search all sectors */
     do {
+        /* 遍历所有的 sector info */
         if (read_sector_info(db, sec_addr, &sector, false) != FDB_NO_ERR) {
             continue;
         }
@@ -520,6 +548,7 @@ static bool find_kv_cb(fdb_kv_t kv, void *arg1, void *arg2)
         return false;
     }
     /* check KV */
+    /* 遍历的时候如果状态为已写入并且名字匹配,才表示匹配 */
     if (kv->crc_is_ok && kv->status == FDB_KV_WRITE && !strncmp(kv->name, key, key_len)) {
         *find_ok = true;
         return true;
@@ -531,6 +560,7 @@ static bool find_kv_no_cache(fdb_kvdb_t db, const char *key, fdb_kv_t kv)
 {
     bool find_ok = false;
 
+    /* 遍历所有的 KV */
     kv_iterator(db, kv, (void *)key, &find_ok, find_kv_cb);
 
     return find_ok;
@@ -549,10 +579,13 @@ static bool find_kv(fdb_kvdb_t db, const char *key, fdb_kv_t kv)
     }
 #endif /* FDB_KV_USING_CACHE */
 
+	/* 如果没有从 cache 中找到，那么从 flash 中找
+     */
     find_ok = find_kv_no_cache(db, key, kv);
 
 #ifdef FDB_KV_USING_CACHE
     if (find_ok) {
+        /* 如果找到将数据更新到 cache */
         update_kv_cache(db, key, key_len, kv->addr.start);
     }
 #endif /* FDB_KV_USING_CACHE */
@@ -799,6 +832,7 @@ static void sector_iterator(fdb_kvdb_t db, kv_sec_info_t sector, fdb_sector_stor
     } while ((sec_addr = get_next_sector_addr(db, sector)) != FAILED_ADDR);
 }
 
+/* 统计空的和有数据写入的 sector 的数量 */
 static bool sector_statistics_cb(kv_sec_info_t sector, void *arg1, void *arg2)
 {
     size_t *empty_sector = arg1, *using_sector = arg2;
@@ -842,6 +876,7 @@ static uint32_t alloc_kv(fdb_kvdb_t db, kv_sec_info_t sector, size_t kv_size)
     /* 如果有在使用的 sector，那么从该 sector 分配 flash 存储空间 */
     if (using_sector > 0) {
         /* alloc the KV from the using status sector first */
+        /* 迭代遍历所有的 KV */
         sector_iterator(db, sector, FDB_SECTOR_STORE_USING, &arg, NULL, alloc_kv_cb, true);
     }
     /* 如果存在为空的 sector 并且没有成功从非空的 sector 申请出 flash 空间 */
@@ -1106,6 +1141,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
     fdb_err_t result = FDB_NO_ERR;
     struct kv_hdr_data kv_hdr;
     bool is_full = false;
+    /* 当前 sector 空闲的 kv 首地址 */
     uint32_t kv_addr = sector->empty_kv;
 
     if (strlen(key) > FDB_KV_NAME_MAX) {
@@ -1117,6 +1153,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
     kv_hdr.magic = KV_MAGIC_WORD;
     kv_hdr.name_len = strlen(key);
     kv_hdr.value_len = len;
+    /* 这个 KV 对的总长度 */
     kv_hdr.len = KV_HDR_DATA_SIZE + FDB_WG_ALIGN(kv_hdr.name_len) + FDB_WG_ALIGN(kv_hdr.value_len);
 
     if (kv_hdr.len > db_sec_size(db) - SECTOR_HDR_DATA_SIZE) {
@@ -1177,6 +1214,7 @@ static fdb_err_t create_kv_blob(fdb_kvdb_t db, kv_sec_info_t sector, const char 
         if (result == FDB_NO_ERR && is_full) {
             /* 触发垃圾回收 */
             FDB_DEBUG("Trigger a GC check after created KV.\n");
+            /* 标记需要触发垃圾回收 */
             db->gc_request = true;
         }
     } else {
@@ -1230,6 +1268,7 @@ static fdb_err_t set_kv(fdb_kvdb_t db, const char *key, const void *value_buf, s
         }
         kv_is_found = find_kv(db, key, &db->cur_kv);
         /* prepare to delete the old KV */
+        /* 准备删除旧的 KV */
         if (kv_is_found) {
             result = del_kv(db, key, &db->cur_kv, false);
         }
@@ -1483,6 +1522,7 @@ static bool check_and_recovery_gc_cb(kv_sec_info_t sector, void *arg1, void *arg
     return false;
 }
 
+/* 检查以及回收 KV */
 static bool check_and_recovery_kv_cb(fdb_kv_t kv, void *arg1, void *arg2)
 {
     fdb_kvdb_t db = arg1;
@@ -1533,10 +1573,12 @@ fdb_err_t _fdb_kv_load(fdb_kvdb_t db)
     /* lock the KV cache */
     db_lock(db);
     /* check all sector header for recovery GC */
+    /* 检查所有的 kv header 并完成尝试修复 */
     sector_iterator(db, &sector, FDB_SECTOR_STORE_UNUSED, db, NULL, check_and_recovery_gc_cb, false);
 
 __retry:
     /* check all KV for recovery */
+    /* 检查所有的 KV 并尝试修复 */
     kv_iterator(db, &kv, db, NULL, check_and_recovery_kv_cb);
     if (db->gc_request) {
         gc_collect(db);
@@ -1634,6 +1676,7 @@ fdb_err_t fdb_kvdb_init(fdb_kvdb_t db, const char *name, const char *part_name, 
     FDB_ASSERT((FDB_GC_EMPTY_SEC_THRESHOLD > 0 && FDB_GC_EMPTY_SEC_THRESHOLD < SECTOR_NUM))
 
 #ifdef FDB_KV_USING_CACHE
+    /* 初始化 KV 的 sector 和 kv 表 */
     for (i = 0; i < FDB_SECTOR_CACHE_TABLE_SIZE; i++) {
         db->sector_cache_table[i].addr = FDB_DATA_UNUSED;
     }
@@ -1693,16 +1736,21 @@ bool fdb_kv_iterate(fdb_kvdb_t db, fdb_kv_iterator_t itr)
     fdb_kv_t kv = &(itr->curr_kv);
     do {
         if (read_sector_info(db, itr->sector_addr, &sector, false) == FDB_NO_ERR) {
+            /* 如果这个 sector 中有正在使用的 KV 或者已经满了 */
             if (sector.status.store == FDB_SECTOR_STORE_USING || sector.status.store == FDB_SECTOR_STORE_FULL) {
                 if (kv->addr.start == 0) {
+                    /* 初始化第一个 KV 的地址 */
                     kv->addr.start = sector.addr + SECTOR_HDR_DATA_SIZE;
                 }
+                /* 获取下一个 KV 的地址 */
                 else if ((kv->addr.start = get_next_kv_addr(db, &sector, kv)) == FAILED_ADDR) {
                     kv->addr.start = 0;
                     continue;
                 }
+                /* 遍历这个 sector 所有的 KV */
                 do {
                     read_kv(db, kv);
+                    /* 如果这个 KV 的状态是已经写过数据了 */
                     if (kv->status == FDB_KV_WRITE) {
                         /* We got a valid kv here. */
                         /* If iterator statistics is needed */
